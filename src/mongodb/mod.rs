@@ -1,12 +1,15 @@
 use anyhow::Result;
-use bson::{doc, to_document, Document};
+use bson::{doc, from_document, Document};
 use dotenv::dotenv;
 use mongodb::{
-    results::{DeleteResult, InsertOneResult, UpdateResult},
+    options::InsertManyOptions,
+    results::{DeleteResult, InsertManyResult, UpdateResult},
     Client, Database,
 };
-use serde::Serialize;
-use std::env;
+
+use odds_api::model::Game;
+use serde::{Deserialize, Serialize};
+use std::{borrow::Borrow, env};
 
 #[derive(Debug)]
 pub struct Atlas {
@@ -14,167 +17,185 @@ pub struct Atlas {
     pub db: Database,
 }
 
+//Do we need a Game ID?
+//Can we have shape of id and data(one individual game or anything)?
+//And if so, how do we query with above data shape?
+//Abstract read to look up via by Game or Mongo ID
+
+//Note, param becomes &Database from Database once we go from AFN => method
+
 impl Atlas {
-    pub async fn try_new() -> Result<Self> {
+    pub async fn try_new(db_name: &str) -> Result<Self> {
         dotenv().ok();
         let client_uri =
             env::var("MONGODB_URI").expect("Please set the MONGODB_URI environment var!");
 
         let client = Client::with_uri_str(client_uri).await?;
 
-        let db = client.database("fnchart");
+        let db = client.database(db_name);
 
         Ok(Self { client, db })
     }
 
-    pub async fn try_create<T>(
-        db: Database,
-        collection_name: &str,
-        upcoming_games: Vec<T>,
-    ) -> Result<Vec<InsertOneResult>>
+    pub async fn try_insert_many<T>(
+        &self,
+        database: &Atlas,
+        table: &str,
+        records: Vec<T>,
+    ) -> Result<InsertManyResult>
     where
-        T: Sized + Serialize,
+        T: Sized + Serialize + Borrow<Document>,
     {
-        {
-            let games_collection = db.collection::<Document>(collection_name);
+        let collection = database.db.collection::<Document>(table);
 
-            let mut result_vec: Vec<InsertOneResult> = Vec::new();
+        let options = InsertManyOptions::builder()
+            .bypass_document_validation(true)
+            .build();
 
-            for game in &upcoming_games {
-                //insert_multiple
-                let bson_game = to_document(&game)?;
-                let insert_result = games_collection.insert_one(bson_game, None).await?;
-                println!("New document ID: {}", &insert_result.inserted_id);
-                result_vec.push(insert_result);
-            }
-            Ok(result_vec)
-        }
+        let insert_many_result = collection.insert_many(records, options).await?;
+        Ok(insert_many_result)
     }
 
-    pub async fn try_read(
-        db: Database,
-        collection_name: &str,
+    pub async fn try_read<T>(
+        &self,
+        database: &Atlas,
+        table: &str,
         read_key: String,
         read_value: String,
-    ) -> Result<Document> {
-        let games_collection = db.collection::<Document>(&collection_name);
+    ) -> Result<Document>
+    where
+        T: for<'de> Deserialize<'de>, //CLARIFY
+    {
+        let collection = database.db.collection::<Document>(table);
 
+        //Abstract query into a function that returns a Document
         let query = doc! {
-            "id": read_value
+            read_key: read_value
         };
 
-        let find_result = games_collection.find_one(query, None).await?.unwrap();
+        let find_result = collection.find_one(query, None).await?.unwrap();
 
         Ok(find_result)
     }
 
     pub async fn try_update(
-        db: Database,
-        collection_name: &str,
-        game_id: String,
+        &self,
+        database: &Atlas,
+        table: &str,
+        record_id: &String,
         update_key: String,
         update_value: String,
     ) -> Result<UpdateResult> {
-        let games_collection = db.collection::<Document>(collection_name);
+        let table = database.db.collection::<Document>(table);
 
         let query = doc! {
-            "id": game_id
+            "id": record_id
         };
 
         let update = doc! {
                   "$set": { update_key: update_value }
         };
 
-        let update_result = games_collection
-            .update_one(query, update, None)
-            .await
-            .unwrap();
+        let update_result = table.update_one(query, update, None).await.unwrap();
 
         Ok(update_result)
     }
 
     pub async fn try_delete_many(
-        db: Database,
-        collection_name: &str,
+        &self,
+        database: &Atlas,
+        table: &str,
         delete_key: String,
         delete_value: String,
     ) -> Result<DeleteResult> {
-        let games_collection = db.collection::<Document>(&collection_name);
+        let table = database.db.collection::<Document>(table);
 
         let query = doc! {
             delete_key: delete_value
         };
 
-        let delete_result = games_collection.delete_many(query, None).await?;
+        let delete_result = table.delete_many(query, None).await?;
         Ok(delete_result)
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod atlas_tests {
+    use bson::to_document;
+
     use super::*;
-    use crate::api::{self, test_data::TestData};
+    use odds_api::{model::Game, test_data::TestData};
 
     #[tokio::test]
     async fn test_01_try_new_atlas_struct() {
-        let atlas = Atlas::try_new().await.unwrap();
+        let db_name = "fnchart";
+        let atlas = Atlas::try_new(db_name).await.unwrap();
         println!("{:#?}", atlas);
     }
 
     #[tokio::test]
-    async fn test_02_try_create() {
-        let atlas = Atlas::try_new().await.unwrap();
+    async fn test_02_try_insert_many() {
+        let db_name = "fnchart";
+        let atlas = Atlas::try_new(db_name).await.unwrap();
         let test_data_struct = TestData::new();
-        let collection_name = "users";
+        let table = "users";
         let data = test_data_struct.data_1;
-        let outcomes = serde_json::from_str::<Vec<api::Game>>(&data).unwrap();
-        println!("{:#?}", outcomes);
-        Atlas::try_create(atlas.db, collection_name, outcomes)
+        let outcomes = serde_json::from_str::<Vec<Game>>(&data)
+            .unwrap()
+            .iter()
+            .map(|game| to_document(game).unwrap())
+            .collect::<Vec<Document>>();
+        atlas
+            .try_insert_many(&atlas, table, outcomes) //Cannot take db
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn test_03_try_read() {
-        let atlas = Atlas::try_new().await.unwrap();
-        let read_key = "id".to_string();
+        let db_name = "fnchart";
+
+        let atlas = Atlas::try_new(db_name).await.unwrap();
+        let table = "users";
+        let read_key = "_id".to_string();
         let read_value = "9c950da2cbab6a4e71437182846961d4".to_string();
-        let collection_name = "users";
-        let find_response = Atlas::try_read(atlas.db, collection_name, read_key, read_value)
+
+        let read_result = atlas
+            .try_read::<Game>(&atlas, table, read_key, read_value)
             .await
             .unwrap();
-        println!("{:#?}", find_response);
+        println!("{:#?}", read_result)
     }
 
     #[tokio::test]
     async fn test_04_try_update() {
-        let atlas = Atlas::try_new().await.unwrap();
-        let collection_name = "users";
-        let query_id = "9c950da2cbab6a4e71437182846961d4".to_string();
+        let db_name = "fnchart";
+        let atlas = Atlas::try_new(db_name).await.unwrap();
+
+        let table = "users";
+        let record_id = &"9c950da2cbab6a4e71437182846961d4".to_string();
         let update_key = "sport_title".to_string();
         let update_value = "NFL".to_string();
-        let update_result = Atlas::try_update(
-            atlas.db,
-            collection_name,
-            query_id,
-            update_key,
-            update_value,
-        )
-        .await
-        .unwrap();
+
+        let update_result = atlas
+            .try_update(&atlas, table, record_id, update_key, update_value)
+            .await
+            .unwrap();
+
         println!("{:#?}", update_result);
     }
 
     #[tokio::test]
     async fn test_05_try_delete() {
-        let atlas = Atlas::try_new().await.unwrap();
-        let collection_name = "users";
+        let db_name = "fnchart";
+        let atlas = Atlas::try_new(db_name).await.unwrap();
+        let table = "users";
         let delete_key = "home_team".to_string();
         let delete_value = "Houston Rockets".to_string();
-        let delete_result =
-            Atlas::try_delete_many(atlas.db, collection_name, delete_key, delete_value)
-                .await
-                .unwrap();
+        let delete_result = atlas
+            .try_delete_many(&atlas, table, delete_key, delete_value)
+            .await
+            .unwrap();
         println!("{:#?}", delete_result);
     }
 }
