@@ -1,13 +1,12 @@
 use anyhow::Result;
-use bson::{doc, from_document, Document};
+use bson::{doc, Document};
 use dotenv::dotenv;
+use futures_util::stream::StreamExt;
 use mongodb::{
     options::InsertManyOptions,
     results::{DeleteResult, InsertManyResult, UpdateResult},
     Client, Database,
 };
-
-use odds_api::model::Game;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, env};
 
@@ -21,8 +20,6 @@ pub struct Atlas {
 //Can we have shape of id and data(one individual game or anything)?
 //And if so, how do we query with above data shape?
 //Abstract read to look up via by Game or Mongo ID
-
-//Note, param becomes &Database from Database once we go from AFN => method
 
 impl Atlas {
     pub async fn try_new(db_name: &str) -> Result<Self> {
@@ -53,6 +50,7 @@ impl Atlas {
             .build();
 
         let insert_many_result = collection.insert_many(records, options).await?;
+        self.try_delete_all(database, table).await;
         Ok(insert_many_result)
     }
 
@@ -64,7 +62,7 @@ impl Atlas {
         read_value: String,
     ) -> Result<Document>
     where
-        T: for<'de> Deserialize<'de>, //CLARIFY
+        T: for<'de> Deserialize<'de>,
     {
         let collection = database.db.collection::<Document>(table);
 
@@ -72,24 +70,37 @@ impl Atlas {
         let query = doc! {
             read_key: read_value
         };
-
         let find_result = collection.find_one(query, None).await?.unwrap();
-
         Ok(find_result)
+    }
+
+    pub async fn try_read_all(&self, database: &Atlas, table: &str) -> Result<Vec<Document>> {
+        let table_handle = database.db.collection::<Document>(table);
+
+        let mut cursor = table_handle.find(doc! {}, None).await?;
+        let mut read_res = Vec::new();
+
+        while let Some(result) = cursor.next().await {
+            if let Ok(document) = result {
+                read_res.push(document);
+            }
+        }
+
+        Ok(read_res)
     }
 
     pub async fn try_update(
         &self,
         database: &Atlas,
         table: &str,
-        record_id: &String,
+        record_id: &str,
         update_key: String,
         update_value: String,
     ) -> Result<UpdateResult> {
         let table = database.db.collection::<Document>(table);
 
         let query = doc! {
-            "id": record_id
+            "_id": record_id
         };
 
         let update = doc! {
@@ -97,6 +108,11 @@ impl Atlas {
         };
 
         let update_result = table.update_one(query, update, None).await.unwrap();
+
+        match &update_result.upserted_id {
+            Some(upserted_id) => upserted_id.as_str().unwrap(),
+            None => record_id,
+        };
 
         Ok(update_result)
     }
@@ -116,6 +132,12 @@ impl Atlas {
 
         let delete_result = table.delete_many(query, None).await?;
         Ok(delete_result)
+    }
+
+    pub async fn try_delete_all(&self, database: &Atlas, table: &str) {
+        let filter = doc! {};
+        let table = database.db.collection::<Document>(table);
+        table.delete_many(filter, None).await.unwrap();
     }
 }
 
@@ -146,7 +168,7 @@ mod atlas_tests {
             .map(|game| to_document(game).unwrap())
             .collect::<Vec<Document>>();
         atlas
-            .try_insert_many(&atlas, table, outcomes) //Cannot take db
+            .try_insert_many(&atlas, table, outcomes)
             .await
             .unwrap();
     }
@@ -168,12 +190,23 @@ mod atlas_tests {
     }
 
     #[tokio::test]
+    async fn test_03_try_read_all() {
+        let db_name = "fnchart";
+
+        let atlas = Atlas::try_new(db_name).await.unwrap();
+        let table = "users";
+
+        let read_result = atlas.try_read_all(&atlas, table).await.unwrap();
+        println!("{:#?}", read_result)
+    }
+
+    #[tokio::test]
     async fn test_04_try_update() {
         let db_name = "fnchart";
         let atlas = Atlas::try_new(db_name).await.unwrap();
 
         let table = "users";
-        let record_id = &"9c950da2cbab6a4e71437182846961d4".to_string();
+        let record_id = &"56420b74c402bfccb04db2542d901054".to_string();
         let update_key = "sport_title".to_string();
         let update_value = "NFL".to_string();
 
@@ -197,5 +230,13 @@ mod atlas_tests {
             .await
             .unwrap();
         println!("{:#?}", delete_result);
+    }
+
+    #[tokio::test]
+    async fn test_06_try_delete_all() {
+        let db_name = "fnchart";
+        let atlas = Atlas::try_new(db_name).await.unwrap();
+        let table = "users";
+        let delete_all_result = atlas.try_delete_all(&atlas, table).await;
     }
 }

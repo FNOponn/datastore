@@ -29,28 +29,13 @@ impl Datastore {
             .try_insert_many(&self.database, table, records)
             .await?;
 
-        // let mut arr = Vec::new();
+        let id_arr = res.inserted_ids.values().map(ToString::to_string).collect();
 
-        // for (_, value) in res.inserted_ids {
-        //     let string_element = value.to_string();
-        //     arr.push(string_element);
-        // }
+        print!("{:#?}", id_arr);
 
-        let arr = res.inserted_ids.values().map(ToString::to_string).collect();
-
-        // let arr = res
-        //     .inserted_ids
-        //     .values()
-        //     .map(|value| value.to_string())
-        //     .collect();
-
-        print!("{:#?}", arr);
-
-        Ok(arr)
+        Ok(id_arr)
     }
 
-    //Pass Generic<T> transform Result to T
-    //Implement From Trait on MongoDB
     pub async fn try_read<T>(&self, table: &str, read_key: String, read_value: String) -> Result<T>
     where
         T: for<'de> Deserialize<'de>,
@@ -64,6 +49,15 @@ impl Datastore {
         Ok(read_result)
     }
 
+    pub async fn try_read_all(&self, table: &str) -> Result<Vec<Document>> {
+        let res = self
+            .database
+            .try_read_all(&self.database, table)
+            .await
+            .unwrap();
+        Ok(res)
+    }
+
     pub async fn try_update(
         &self,
         table: &str,
@@ -75,8 +69,8 @@ impl Datastore {
             .database
             .try_update(&self.database, table, &record_id, update_key, update_value)
             .await?;
-        println!("{:#?}", res);
         Ok(record_id)
+        //Look more into upserted
     }
 
     pub async fn try_delete(
@@ -91,8 +85,6 @@ impl Datastore {
         Ok(())
     }
 }
-
-//Instantiate Datastore struct inside Server crate
 
 #[cfg(test)]
 mod datastore_tests {
@@ -134,7 +126,7 @@ mod datastore_tests {
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
         let table = "users";
-        let read_key = "id".to_string();
+        let read_key = "_id".to_string();
         let read_value = "9c950da2cbab6a4e71437182846961d4".to_string();
 
         let read_result = data_store
@@ -146,12 +138,22 @@ mod datastore_tests {
     }
 
     #[tokio::test]
+    async fn test_04_try_read_all() {
+        let db_name = "fnchart";
+        let data_store = Datastore::try_new(db_name).await.unwrap();
+
+        let table = "users";
+        let try_read_all_result = data_store.try_read_all(table).await.unwrap();
+        println!("{:#?}", try_read_all_result);
+    }
+
+    #[tokio::test]
     async fn test_04_try_update() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
         let table = "users";
-        let query_id = "9c950da2cbab6a4e71437182846961d4".to_string();
+        let query_id = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
         let update_key = "sport_title".to_string();
         let update_value = "AFL".to_string();
         data_store

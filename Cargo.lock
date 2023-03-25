@@ -306,6 +306,7 @@ dependencies = [
  "bson",
  "dotenv",
  "futures",
+ "futures-util",
  "mongod",
  "mongodb",
  "odds_api",
