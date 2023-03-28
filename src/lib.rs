@@ -2,7 +2,7 @@ mod mongodb;
 use std::borrow::Borrow;
 
 use anyhow::Result;
-use bson::{from_document, Document};
+use bson::{from_document, Bson, Document};
 use serde::{Deserialize, Serialize};
 
 use crate::mongodb::Atlas;
@@ -20,7 +20,22 @@ impl Datastore {
         })
     }
 
-    pub async fn try_create<T>(&self, table: &str, records: Vec<T>) -> Result<Vec<String>>
+    pub async fn try_create<T>(&self, table: &str, record: T) -> Result<Bson>
+    where
+        T: Serialize + Borrow<Document>,
+    {
+        let res = self
+            .database
+            .try_insert(&self.database, table, record)
+            .await?;
+
+        let new_record_id = res.inserted_id;
+        println!("{:#?}", new_record_id);
+
+        Ok(new_record_id)
+    }
+
+    pub async fn try_create_many<T>(&self, table: &str, records: Vec<T>) -> Result<Vec<String>>
     where
         T: Serialize + Borrow<Document>,
     {
@@ -70,25 +85,27 @@ impl Datastore {
             .try_update(&self.database, table, &record_id, update_key, update_value)
             .await?;
         Ok(record_id)
+        //Should we return the record_id or the new Book that is updated?
         //Look more into upserted
     }
 
     pub async fn try_delete(
         &self,
-        collection_name: &str,
+        table: &str,
         delete_key: String,
         delete_value: String,
-    ) -> Result<()> {
-        self.database
-            .try_delete_many(&self.database, collection_name, delete_key, delete_value)
+    ) -> Result<Document> {
+        let res = self
+            .database
+            .try_delete(&self.database, table, delete_key, delete_value)
             .await?;
-        Ok(())
+        Ok(res)
     }
 }
 
 #[cfg(test)]
 mod datastore_tests {
-    use bson::to_document;
+    use bson::{doc, to_document};
 
     use super::*;
     use odds_api::{model::Game, test_data::TestData};
@@ -101,12 +118,24 @@ mod datastore_tests {
     }
 
     #[tokio::test]
-    async fn test_02_try_create() {
+    async fn test_02_try_create_one() {
+        let db_name = "fnchart";
+        let data_store = Datastore::try_new(db_name).await.unwrap();
+        let table = "users";
+        let test_record = doc! {
+            "name": "Harry P",
+            "author": "JKR"
+        };
+        let res = data_store.try_create(table, test_record).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_03_try_create_many() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
         let test_data_struct = TestData::new();
-        let collection_name = "users";
+        let table = "users";
         let data = test_data_struct.data_1;
         let outcomes = serde_json::from_str::<Vec<Game>>(&data)
             .unwrap()
@@ -114,14 +143,11 @@ mod datastore_tests {
             .map(|game| to_document(game).unwrap())
             .collect::<Vec<Document>>();
 
-        data_store
-            .try_create(collection_name, outcomes)
-            .await
-            .unwrap();
+        data_store.try_create_many(table, outcomes).await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_03_try_read() {
+    async fn test_04_try_read() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
@@ -138,7 +164,7 @@ mod datastore_tests {
     }
 
     #[tokio::test]
-    async fn test_04_try_read_all() {
+    async fn test_05_try_read_all() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
@@ -148,7 +174,7 @@ mod datastore_tests {
     }
 
     #[tokio::test]
-    async fn test_04_try_update() {
+    async fn test_06_try_update() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
@@ -163,16 +189,19 @@ mod datastore_tests {
     }
 
     #[tokio::test]
-    async fn test_05_try_delete() {
+    async fn test_07_try_delete() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
         let collection_name = "users";
-        let delete_key = "home_team".to_string();
-        let delete_value = "Houston Rockets".to_string();
-        data_store
+        let delete_key = "_id".to_string();
+        let delete_value = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
+
+        let res = data_store
             .try_delete(collection_name, delete_key, delete_value)
             .await
             .unwrap();
+
+        println!("{:?}", res);
     }
 }

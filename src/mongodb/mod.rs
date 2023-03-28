@@ -4,7 +4,7 @@ use dotenv::dotenv;
 use futures_util::stream::StreamExt;
 use mongodb::{
     options::InsertManyOptions,
-    results::{DeleteResult, InsertManyResult, UpdateResult},
+    results::{DeleteResult, InsertManyResult, InsertOneResult, UpdateResult},
     Client, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,21 @@ impl Atlas {
         let db = client.database(db_name);
 
         Ok(Self { client, db })
+    }
+
+    pub async fn try_insert<T>(
+        &self,
+        database: &Atlas,
+        table: &str,
+        record: T,
+    ) -> Result<InsertOneResult>
+    where
+        T: Borrow<Document>,
+    {
+        let collection = database.db.collection::<Document>(table);
+        let insert_result = collection.insert_one(record, None).await?;
+
+        Ok(insert_result)
     }
 
     pub async fn try_insert_many<T>(
@@ -117,20 +132,20 @@ impl Atlas {
         Ok(update_result)
     }
 
-    pub async fn try_delete_many(
+    pub async fn try_delete(
         &self,
         database: &Atlas,
         table: &str,
         delete_key: String,
         delete_value: String,
-    ) -> Result<DeleteResult> {
+    ) -> Result<Document> {
         let table = database.db.collection::<Document>(table);
 
         let query = doc! {
             delete_key: delete_value
         };
 
-        let delete_result = table.delete_many(query, None).await?;
+        let delete_result = table.find_one_and_delete(query, None).await?.unwrap();
         Ok(delete_result)
     }
 
@@ -156,7 +171,36 @@ mod atlas_tests {
     }
 
     #[tokio::test]
-    async fn test_02_try_insert_many() {
+    async fn test_02_try_insert_one() {
+        let db_name = "fnchart";
+        let atlas = Atlas::try_new(db_name).await.unwrap();
+        let table = "users";
+
+        let test_data_struct = TestData::new();
+        let data = test_data_struct.data_1;
+
+        let outcomes = serde_json::from_str::<Vec<Game>>(&data)
+            .unwrap()
+            .iter()
+            .take(1)
+            .map(|game| to_document(game).unwrap())
+            .collect::<Vec<Document>>();
+
+        let game = &outcomes[0];
+        let res = atlas.try_insert(&atlas, table, game).await.unwrap();
+        print!("{:#?}", res);
+
+        let delete_key = "_id".to_string();
+        let delete_value = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
+
+        let _ = atlas
+            .try_delete(&atlas, table, delete_key, delete_value)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_03_try_insert_many() {
         let db_name = "fnchart";
         let atlas = Atlas::try_new(db_name).await.unwrap();
         let test_data_struct = TestData::new();
@@ -174,7 +218,7 @@ mod atlas_tests {
     }
 
     #[tokio::test]
-    async fn test_03_try_read() {
+    async fn test_04_try_read() {
         let db_name = "fnchart";
 
         let atlas = Atlas::try_new(db_name).await.unwrap();
@@ -186,11 +230,12 @@ mod atlas_tests {
             .try_read::<Game>(&atlas, table, read_key, read_value)
             .await
             .unwrap();
-        println!("{:#?}", read_result)
+
+        println!("{:#?}", read_result);
     }
 
     #[tokio::test]
-    async fn test_03_try_read_all() {
+    async fn test_05_try_read_all() {
         let db_name = "fnchart";
 
         let atlas = Atlas::try_new(db_name).await.unwrap();
@@ -201,7 +246,7 @@ mod atlas_tests {
     }
 
     #[tokio::test]
-    async fn test_04_try_update() {
+    async fn test_06_try_update() {
         let db_name = "fnchart";
         let atlas = Atlas::try_new(db_name).await.unwrap();
 
@@ -214,26 +259,41 @@ mod atlas_tests {
             .try_update(&atlas, table, record_id, update_key, update_value)
             .await
             .unwrap();
-
         println!("{:#?}", update_result);
     }
 
     #[tokio::test]
-    async fn test_05_try_delete() {
+    async fn test_07_try_delete() {
         let db_name = "fnchart";
         let atlas = Atlas::try_new(db_name).await.unwrap();
         let table = "users";
-        let delete_key = "home_team".to_string();
-        let delete_value = "Houston Rockets".to_string();
+
+        let test_data_struct = TestData::new();
+        let data = test_data_struct.data_1;
+
+        let outcomes = serde_json::from_str::<Vec<Game>>(&data)
+            .unwrap()
+            .iter()
+            .take(1)
+            .map(|game| to_document(game).unwrap())
+            .collect::<Vec<Document>>();
+
+        let game = &outcomes[0];
+
+        let _ = atlas.try_insert(&atlas, table, game).await.unwrap();
+
+        let delete_key = "_id".to_string();
+        let delete_value = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
+
         let delete_result = atlas
-            .try_delete_many(&atlas, table, delete_key, delete_value)
+            .try_delete(&atlas, table, delete_key, delete_value)
             .await
             .unwrap();
         println!("{:#?}", delete_result);
     }
 
     #[tokio::test]
-    async fn test_06_try_delete_all() {
+    async fn test_08_try_delete_all() {
         let db_name = "fnchart";
         let atlas = Atlas::try_new(db_name).await.unwrap();
         let table = "users";
