@@ -9,7 +9,6 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, env};
-
 #[derive(Debug)]
 pub struct Atlas {
     pub client: Client,
@@ -108,25 +107,24 @@ impl Atlas {
         &self,
         database: &Atlas,
         table: &str,
-        record_id: &str,
-        update_key: String,
-        update_value: String,
+        update_record_id: &String,
+        update_record: Document,
     ) -> Result<UpdateResult> {
         let table = database.db.collection::<Document>(table);
 
         let query = doc! {
-            "_id": record_id
+            "_id": update_record_id
         };
 
         let update = doc! {
-                  "$set": { update_key: update_value }
+            "$set": update_record
         };
 
         let update_result = table.update_one(query, update, None).await.unwrap();
 
         match &update_result.upserted_id {
             Some(upserted_id) => upserted_id.as_str().unwrap(),
-            None => record_id,
+            None => update_record_id,
         };
 
         Ok(update_result)
@@ -136,13 +134,12 @@ impl Atlas {
         &self,
         database: &Atlas,
         table: &str,
-        delete_key: String,
-        delete_value: String,
+        record_id: String,
     ) -> Result<Document> {
         let table = database.db.collection::<Document>(table);
 
         let query = doc! {
-            delete_key: delete_value
+            "_id": record_id
         };
 
         let delete_result = table.find_one_and_delete(query, None).await?.unwrap();
@@ -189,14 +186,9 @@ mod atlas_tests {
         let game = &outcomes[0];
         let res = atlas.try_insert(&atlas, table, game).await.unwrap();
         print!("{:#?}", res);
+        let record_id = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
 
-        let delete_key = "_id".to_string();
-        let delete_value = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
-
-        let _ = atlas
-            .try_delete(&atlas, table, delete_key, delete_value)
-            .await
-            .unwrap();
+        let _ = atlas.try_delete(&atlas, table, record_id).await.unwrap();
     }
 
     #[tokio::test]
@@ -245,22 +237,22 @@ mod atlas_tests {
         println!("{:#?}", read_result)
     }
 
-    #[tokio::test]
-    async fn test_06_try_update() {
-        let db_name = "fnchart";
-        let atlas = Atlas::try_new(db_name).await.unwrap();
+    // #[tokio::test]
+    // async fn test_06_try_update() {
+    //     let db_name = "fnchart";
+    //     let atlas = Atlas::try_new(db_name).await.unwrap();
 
-        let table = "users";
-        let record_id = &"56420b74c402bfccb04db2542d901054".to_string();
-        let update_key = "sport_title".to_string();
-        let update_value = "NFL".to_string();
+    //     let table = "users";
+    //     let record_id = &"56420b74c402bfccb04db2542d901054".to_string();
+    //     let update_key = "sport_title".to_string();
+    //     let update_value = "NFL".to_string();
 
-        let update_result = atlas
-            .try_update(&atlas, table, record_id, update_key, update_value)
-            .await
-            .unwrap();
-        println!("{:#?}", update_result);
-    }
+    //     let update_result = atlas
+    //         .try_update(&atlas, table, record_id, update_key, update_value)
+    //         .await
+    //         .unwrap();
+    //     println!("{:#?}", update_result);
+    // }
 
     #[tokio::test]
     async fn test_07_try_delete() {
@@ -282,13 +274,9 @@ mod atlas_tests {
 
         let _ = atlas.try_insert(&atlas, table, game).await.unwrap();
 
-        let delete_key = "_id".to_string();
         let delete_value = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
 
-        let delete_result = atlas
-            .try_delete(&atlas, table, delete_key, delete_value)
-            .await
-            .unwrap();
+        let delete_result = atlas.try_delete(&atlas, table, delete_value).await.unwrap();
         println!("{:#?}", delete_result);
     }
 

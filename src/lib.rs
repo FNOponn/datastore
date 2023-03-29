@@ -2,7 +2,7 @@ mod mongodb;
 use std::borrow::Borrow;
 
 use anyhow::Result;
-use bson::{from_document, Bson, Document};
+use bson::{from_document, to_document, Bson, Document};
 use serde::{Deserialize, Serialize};
 
 use crate::mongodb::Atlas;
@@ -10,6 +10,10 @@ use crate::mongodb::Atlas;
 pub struct Datastore {
     pub database: Atlas,
     // pub cache: Redis,
+}
+
+pub trait HasId {
+    fn _id(&self) -> &String;
 }
 
 impl Datastore {
@@ -73,31 +77,25 @@ impl Datastore {
         Ok(res)
     }
 
-    pub async fn try_update(
-        &self,
-        table: &str,
-        record_id: String,
-        update_key: String,
-        update_value: String,
-    ) -> Result<String> {
-        let res = self
+    pub async fn try_update<T>(&self, table: &str, update_record: T) -> Result<T>
+    where
+        T: Serialize + HasId,
+    {
+        let update_record_id = update_record._id();
+
+        let update_document = to_document(&update_record).unwrap();
+
+        let _ = self
             .database
-            .try_update(&self.database, table, &record_id, update_key, update_value)
+            .try_update(&self.database, table, update_record_id, update_document)
             .await?;
-        Ok(record_id)
-        //Should we return the record_id or the new Book that is updated?
-        //Look more into upserted
+        Ok(update_record)
     }
 
-    pub async fn try_delete(
-        &self,
-        table: &str,
-        delete_key: String,
-        delete_value: String,
-    ) -> Result<Document> {
+    pub async fn try_delete(&self, table: &str, record_id: String) -> Result<Document> {
         let res = self
             .database
-            .try_delete(&self.database, table, delete_key, delete_value)
+            .try_delete(&self.database, table, record_id)
             .await?;
         Ok(res)
     }
@@ -109,6 +107,19 @@ mod datastore_tests {
 
     use super::*;
     use odds_api::{model::Game, test_data::TestData};
+
+    //Double check if this is valid in order to hardwire _id to generic T
+    #[derive(Debug, Serialize)]
+    struct User {
+        _id: String,
+        name: String,
+    }
+
+    impl HasId for User {
+        fn _id(&self) -> &String {
+            &self._id
+        }
+    }
 
     #[tokio::test]
     async fn test_01_try_new_data_store_struct() {
@@ -179,13 +190,14 @@ mod datastore_tests {
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
         let table = "users";
-        let query_id = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
-        let update_key = "sport_title".to_string();
-        let update_value = "AFL".to_string();
-        data_store
-            .try_update(table, query_id, update_key, update_value)
-            .await
-            .unwrap();
+
+        let update_user = User {
+            _id: "1".to_string(),
+            name: "Roman".to_string(),
+        };
+
+        let update_result = data_store.try_update(table, update_user).await.unwrap();
+        println!("{:#?}", update_result);
     }
 
     #[tokio::test]
@@ -194,11 +206,10 @@ mod datastore_tests {
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
         let collection_name = "users";
-        let delete_key = "_id".to_string();
-        let delete_value = "e40d079e6db5293e7e0aa22e0c857a85".to_string();
+        let record_id = "6423b7d647a9690332556b41".to_string();
 
         let res = data_store
-            .try_delete(collection_name, delete_key, delete_value)
+            .try_delete(collection_name, record_id)
             .await
             .unwrap();
 
