@@ -6,13 +6,17 @@ use bson::{from_document, to_document, Bson, Document};
 use serde::{Deserialize, Serialize};
 
 use crate::mongodb::Atlas;
+
+pub struct Test {
+    name: String,
+}
 #[derive(Debug)]
 pub struct Datastore {
     pub database: Atlas,
     // pub cache: Redis,
 }
 
-pub trait HasId {
+pub trait MongoStorable {
     fn _id(&self) -> &String;
 }
 
@@ -79,7 +83,7 @@ impl Datastore {
 
     pub async fn try_update<T>(&self, table: &str, update_record: T) -> Result<T>
     where
-        T: Serialize + HasId,
+        T: Serialize + MongoStorable,
     {
         let update_record_id = update_record._id();
 
@@ -87,7 +91,7 @@ impl Datastore {
 
         let _ = self
             .database
-            .try_update(&self.database, table, update_record_id, update_document)
+            .try_update_one(&self.database, table, update_record_id, update_document)
             .await?;
         Ok(update_record)
     }
@@ -96,6 +100,18 @@ impl Datastore {
         let res = self
             .database
             .try_delete(&self.database, table, record_id)
+            .await?;
+        Ok(res)
+    }
+
+    pub async fn try_find_documents_by_ids(
+        &self,
+        table: &str,
+        ids: Vec<String>,
+    ) -> Result<Vec<Document>> {
+        let res = self
+            .database
+            .try_read_documents_by_ids(&self.database, table, ids)
             .await?;
         Ok(res)
     }
@@ -108,14 +124,13 @@ mod datastore_tests {
     use super::*;
     use odds_api::{model::Game, test_data::TestData};
 
-    //Double check if this is valid in order to hardwire _id to generic T
     #[derive(Debug, Serialize)]
     struct User {
         _id: String,
         name: String,
     }
 
-    impl HasId for User {
+    impl MongoStorable for User {
         fn _id(&self) -> &String {
             &self._id
         }
@@ -179,7 +194,7 @@ mod datastore_tests {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
-        let table = "users";
+        let table = "books";
         let try_read_all_result = data_store.try_read_all(table).await.unwrap();
         println!("{:#?}", try_read_all_result);
     }
@@ -214,5 +229,21 @@ mod datastore_tests {
             .unwrap();
 
         println!("{:?}", res);
+    }
+
+    #[tokio::test]
+    async fn test_08_find_documents_by_ids() {
+        let db_name = "fnchart";
+        let data_store = Datastore::try_new(db_name).await.unwrap();
+
+        let table = "users";
+
+        let ids = vec!["1".to_string(), "2".to_string(), "3".to_string()];
+
+        let update_result = data_store
+            .try_find_documents_by_ids(table, ids)
+            .await
+            .unwrap();
+        println!("{:#?}", update_result);
     }
 }

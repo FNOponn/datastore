@@ -10,7 +10,7 @@ mongodb = "2.3.1"
 bson = { version = "2.5.0", features = ["chrono-0_4"] } # Needed for using chrono datetime in doc
 serde = { version = "1.0", features = ["derive"] }
 odds_api = { path = "../tasks/task_odds_data" }
-
+# books = {path = "../apps/app_book"}
 dotenv = "0.15.0"
 anyhow = "1.0.69"
 futures = "0.3.26"
