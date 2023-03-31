@@ -1,11 +1,11 @@
 use anyhow::Result;
 use bson::{doc, Document};
 use dotenv::dotenv;
-use futures_util::stream::StreamExt;
+use futures::stream::{self, TryStreamExt};
 use mongodb::{
     options::InsertManyOptions,
     results::{DeleteResult, InsertManyResult, InsertOneResult},
-    Client, Database,
+    Client, ClientSession, Database,
 };
 
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,6 @@ impl Atlas {
             env::var("MONGODB_URI").expect("Please set the MONGODB_URI environment var!");
 
         let client = Client::with_uri_str(client_uri).await?;
-
         let db = client.database(db_name);
 
         Ok(Self { client, db })
@@ -55,12 +54,12 @@ impl Atlas {
         T: Sized + Serialize + Borrow<Document>,
     {
         let collection = database.db.collection::<Document>(table);
+        let mut session = database.client.start_session(None).await?;
 
-        let options = InsertManyOptions::builder()
-            .bypass_document_validation(true)
-            .build();
+        let insert_many_result = collection
+            .insert_many_with_session(records, None, &mut session)
+            .await?;
 
-        let insert_many_result = collection.insert_many(records, options).await?;
         Ok(insert_many_result)
     }
 
@@ -89,12 +88,13 @@ impl Atlas {
         ids: Vec<String>,
     ) -> Result<Vec<Document>> {
         let table = database.db.collection::<Document>(table);
+        let mut session = database.client.start_session(None).await?;
 
         let filter = doc! { "_id": { "$in": ids } };
-        let mut cursor = table.find(filter, None).await?;
+        let mut cursor = table.find_with_session(filter, None, &mut session).await?;
         let mut documents = Vec::new();
 
-        while let Some(result) = cursor.next().await {
+        while let Some(result) = cursor.next(&mut session).await {
             if let Ok(document) = result {
                 documents.push(document);
             }
@@ -102,14 +102,16 @@ impl Atlas {
         Ok(documents)
     }
 
-    //Transaction-rize? Atomicity vs one by one?
     pub async fn try_read_all(&self, database: &Atlas, table: &str) -> Result<Vec<Document>> {
         let table_handle = database.db.collection::<Document>(table);
+        let mut session = database.client.start_session(None).await?;
 
-        let mut cursor = table_handle.find(doc! {}, None).await?;
+        let mut cursor = table_handle
+            .find_with_session(doc! {}, None, &mut session)
+            .await?;
         let mut read_res = Vec::new();
 
-        while let Some(result) = cursor.next().await {
+        while let Some(result) = cursor.next(&mut session).await {
             if let Ok(document) = result {
                 read_res.push(document);
             }
@@ -145,24 +147,40 @@ impl Atlas {
         Ok(updated_record)
     }
 
-    //See above comment
     pub async fn try_update_many(
         &self,
         database: &Atlas,
         table: &str,
-        update_map: HashMap<&str, Document>,
+        update_map: HashMap<&str, Document>, //Type alias, Document to become T later
     ) -> Result<Vec<Document>> {
         let table = database.db.collection::<Document>(table);
+        let mut session = database.client.start_session(None).await?;
 
         let mut updated_records: Vec<Document> = Vec::new();
 
         for (record_id, document) in update_map {
             let filter = doc! { "_id": record_id };
-            let ref_doc = &document;
-            let update_doc = doc! { "$set": ref_doc };
+            let update_doc = doc! { "$set": &document };
             updated_records.push(document);
-            table.update_one(filter, update_doc, None).await?;
+            table
+                .update_one_with_session(filter, update_doc, None, &mut session)
+                .await?;
         }
+
+        // let update_futures = update_map
+        //     .into_iter()
+        //     .map(|(record_id, document)| async move {
+        //         let filter = doc! { "_id": record_id };
+        //         let update_doc = doc! { "$set": document };
+        //         table
+        //             .update_one_with_session(filter, update_doc, None, &mut session)
+        //             .await
+        //     });
+
+        // let res = stream::iter(update_futures)
+        //     .try_for_each_concurrent(None, |result| async move { result })
+        //     .await?;
+
         Ok(updated_records)
     }
 
@@ -189,11 +207,14 @@ impl Atlas {
         delete_ids: Vec<String>,
     ) -> Result<()> {
         let table = database.db.collection::<Document>(table);
+        let mut session = database.client.start_session(None).await?;
 
         let filter = doc! {
             "_id": { "$in": delete_ids },
         };
-        let res = table.delete_many(filter, None).await?;
+        let res = table
+            .delete_many_with_session(filter, None, &mut session)
+            .await?;
         println!("{:#?}", res);
         Ok(())
     }
@@ -205,12 +226,12 @@ impl Atlas {
     }
 }
 
+//Move this out
 #[cfg(test)]
 mod atlas_tests {
     use bson::to_document;
 
     use super::*;
-    // use book::BookRecord;
     use odds_api::{model::Game, test_data::TestData};
 
     #[tokio::test]
@@ -272,6 +293,7 @@ mod atlas_tests {
         atlas.try_delete_all(&atlas, table).await;
     }
 
+    //Mirror BookRecord for tests
     #[tokio::test]
     async fn test_04_try_read() {
         let db_name = "fnchart";
@@ -296,8 +318,7 @@ mod atlas_tests {
         let table = "books";
         let ids = vec![
             "e40d079e6db5293e7e0aa22e0c857a85".to_string(),
-            "2".to_string(),
-            "3".to_string(),
+            "0aa7ba9d4ef9dfacd6c1d4e545b86e87".to_string(),
         ];
         let res = atlas
             .try_read_documents_by_ids(&atlas, table, ids)
