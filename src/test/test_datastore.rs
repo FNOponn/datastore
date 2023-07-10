@@ -1,71 +1,69 @@
 #[cfg(test)]
 mod datastore_tests {
     use crate::book_types::{Book, BookRecord, MongoStorable};
-    use crate::{Cache, Datastore};
+    use crate::{Cache, CacheState, Datastore};
     use bson::{doc, from_document, to_document, Document};
-    use odds_api::test_data::TestData;
     use std::{collections::HashMap, time::Duration};
-
-    //create(assert both exists in atlas + redis) + delete the whole thing
-
-    //create + update(only assert the updated value) delete everything
 
     //create + delete (assert the deletion is successful)
 
     //update + delete something that does not exist
 
     #[tokio::test]
-    async fn test_04_try_create_read_from_redis_and_delete_one() {
+    // #[ignore]
+    async fn test_01_try_create_read_one_from_redis() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
-        let table = "books";
-        let record_id = "7e9dd50fdb0b2d895dffc78a239997f7";
-        let bookstore_id = "af4ce4eef1f90ea40e71";
+        let table = "books1";
 
-        let new_record = doc! {
-            "_id": &record_id,
-            "bookstore_id": bookstore_id,
-            "data": {
-                "name": "Red Wall",
-                "author": "Brian Jacques"
-            }
+        let book_record = BookRecord {
+            _id: "03d15979ffd0df61cd6dd3d5a2fc4d04".to_owned(),
+            data: Book {
+                name: "The Grapes of Wrath".to_owned(),
+                author: "John Steinbeck".to_owned(),
+                bookstore_id: "2b7245f77b1866f1fd422944eca23609".to_owned(),
+            },
         };
 
         let _ = data_store
-            .try_create(table, new_record.clone(), None)
+            .try_create_one(table, "books", book_record.clone(), None)
             .await
             .unwrap();
 
         let read_res = data_store
-            .try_read::<BookRecord>(table, &record_id)
+            .try_read::<BookRecord>(table, &book_record._id)
             .await
             .unwrap();
 
-        let assert_record: BookRecord = from_document::<BookRecord>(new_record).unwrap();
+        let cache_state = read_res.state;
 
-        assert_eq!(read_res, Cache::Hit(assert_record));
+        let returned_book_record = read_res.data;
 
-        let _ = data_store.try_delete(table, record_id).await.unwrap();
+        assert_eq!(CacheState::Hit, cache_state);
+        assert_eq!(book_record, returned_book_record);
+
+        let _ = data_store.clear_datastore("books1").await.unwrap();
     }
 
     //Expiry time should be a property of the cache itself and set during constructor
     #[tokio::test]
-    async fn test_05_try_create_read_from_atlas_and_delete_one() {
+    // #[ignore]
+    async fn test_02_try_create_read_one_from_atlas() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
-        let table = "books";
-        let record_id = "7e9dd50fdb0b2d895dffc78a239997f7";
+        let table = "books2";
 
-        let new_record = doc! {
-            "_id": &record_id,
-            "data": {
-                "name": "The Long Patrol",
-                "author": "Brian Jacques"
-            }
+        let book_record = BookRecord {
+            _id: "cfa6fec292ddbe2004d6498d109f0225".to_owned(),
+            data: Book {
+                name: "East of Eden".to_owned(),
+                author: "John Steinbeck".to_owned(),
+                bookstore_id: "2b7245f77b1866f1fd422944eca23609".to_owned(),
+            },
         };
 
         let _ = data_store
-            .try_create(table, new_record.clone(), Some(3))
+            .try_create_one(table, "books", book_record.clone(), Some(3))
             .await
             .unwrap();
 
@@ -73,178 +71,107 @@ mod datastore_tests {
         std::thread::sleep(wait_time);
 
         let read_res = data_store
-            .try_read::<BookRecord>(table, record_id)
+            .try_read::<BookRecord>(table, &book_record._id)
             .await
             .unwrap();
 
-        let assert_record: BookRecord = from_document::<BookRecord>(new_record).unwrap();
+        let cache_state = read_res.state;
 
-        assert_eq!(read_res, Cache::Miss(assert_record));
+        let returned_book_record = read_res.data;
 
-        let _ = data_store.try_delete(table, record_id).await.unwrap();
+        assert_eq!(CacheState::Miss, cache_state);
+        assert_eq!(book_record, returned_book_record);
+
+        let _ = data_store.clear_datastore("books2").await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_06_try_create_many_read_from_redis_and_delete_many() {
+    async fn test_03_try_create_update_one() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
-
-        let test_data_struct = TestData::new();
-        let table = "books";
-        let data = test_data_struct.book;
-        let records = serde_json::from_str::<Vec<BookRecord>>(&data)
-            .unwrap()
-            .iter()
-            .map(|game| to_document(game).unwrap())
-            .collect::<Vec<Document>>();
-
-        data_store
-            .try_create_many(table, records, None)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_08_try_read_all() {
-        let db_name = "fnchart";
-        let data_store = Datastore::try_new(db_name).await.unwrap();
-
-        let table = "books";
-        let try_read_all_result = data_store.try_read_all(table).await.unwrap();
-        println!("{:#?}", try_read_all_result);
-    }
-
-    #[tokio::test]
-    async fn test_09_try_update_one() {
-        let db_name = "fnchart";
-        let data_store = Datastore::try_new(db_name).await.unwrap();
-
         let table = "books";
 
-        //Create a struct here and then convert it into a document
-
-        let original_record = doc! {
-            "_id": "7e9dd50fdb0b2d895dffc78a239997f7",
-            "data": {
-                "name": "East of Eden",
-                "author": "John Steinbeck"
-            }
-        };
-
-        let update_record = BookRecord {
-            _id: "7e9dd50fdb0b2d895dffc78a239997f7".to_owned(),
+        let book_record = BookRecord {
+            _id: "a646dede9f45ef658f86da8d2ec13da4".to_owned(),
             data: Book {
                 name: "The Grapes of Wrath".to_owned(),
                 author: "John Steinbeck".to_owned(),
-                bookstore_id: "ABC".to_owned(),
+                bookstore_id: "2b7245f77b1866f1fd422944eca23609".to_owned(),
             },
         };
 
-        //   let original_record = doc! {
-        //     "_id": "7e9dd50fdb0b2d895dffc78a239997f7",
-        //     "data": {
-        //         "name": "East of Eden",
-        //         "author": "John Steinbeck"
-        //     }
-        // };
+        let _ = data_store
+            .try_create_one(table, "books", book_record.clone(), None)
+            .await
+            .unwrap();
 
-        // let update_record = doc! {
-        //     "_id": "7e9dd50fdb0b2d895dffc78a239997f7",
-        //     "data": {
-        //         "name": "The Grapes of Wrath",
-        //         "author": "John Steinbeck"
-        //     }
-        // };
-
-        // let _ = data_store
-        //     .try_create(table, original_record, None)
-        //     .await
-        //     .unwrap();
-
-        // let update_record: BookRecord = from_document::<BookRecord>(update_record).unwrap();
-
-        // let update_result = data_store
-        //     .try_update_one(table, update_record.clone(), None)
-        //     .await
-        //     .unwrap();
-
-        //Extract value from DB + Cache and assert?
+        let update_record = BookRecord {
+            _id: "a646dede9f45ef658f86da8d2ec13da4".to_owned(),
+            data: Book {
+                name: "Of Mouse and Men".to_owned(),
+                author: "John Steinbeck".to_owned(),
+                bookstore_id: "2b7245f77b1866f1fd422944eca23609".to_owned(),
+            },
+        };
 
         let _ = data_store
-            .try_delete(table, &update_record._id)
+            .try_update_one(table, "books", update_record.clone(), None)
             .await
             .unwrap();
+
+        let read_res = data_store
+            .try_read::<BookRecord>(table, &update_record._id)
+            .await
+            .unwrap();
+
+        // println!("{:#?}", read_res);
+
+        let returned_updated_book_record = read_res.data;
+
+        assert_eq!(update_record, returned_updated_book_record);
+
+        let _ = data_store.clear_datastore("books").await.unwrap();
     }
 
-    //Big CRUD test here
     #[tokio::test]
-    async fn test_10_try_update_many() {
+    async fn test_04_try_create_delete_one() {
         let db_name = "fnchart";
-        let mut data_store = Datastore::try_new(db_name).await.unwrap();
+        let data_store = Datastore::try_new(db_name).await.unwrap();
+        let table = "books4";
 
-        let mut update_map = HashMap::new();
-
-        let table = "books";
-
-        let update_record1 = doc! {
-            "_id": "0aa7ba9d4ef9dfacd6c1d4e545b86e87"
-        ,
-            "data": {
-                "name": "Dagon",
-                "author": "HP Lovecraft"
-            }
+        let book_record = BookRecord {
+            _id: "a5ec5ea231e0568f93aa88719159f4eb".to_owned(),
+            data: Book {
+                name: "The Grapes of Wrath".to_owned(),
+                author: "John Steinbeck".to_owned(),
+                bookstore_id: "2b7245f77b1866f1fd422944eca23609".to_owned(),
+            },
         };
 
-        let update_record2 = doc! {
-            "_id": "7e9dd50fdb0b2d895dffc78a239997f7",
-            "data": {
-                "name": "The Long Patrol",
-                "author": "Brian Jacques"
-            }
-        };
-
-        update_map.insert(
-            "0aa7ba9d4ef9dfacd6c1d4e545b86e87".to_string(),
-            update_record1,
-        );
-        update_map.insert(
-            "7e9dd50fdb0b2d895dffc78a239997f7".to_string(),
-            update_record2,
-        );
-
-        let update_result = data_store
-            .try_update_many::<BookRecord>(table, update_map)
-            .await
-            .unwrap();
-        println!("{:#?}", update_result);
-    }
-
-    #[tokio::test]
-    async fn test_11_try_delete() {
-        let db_name = "fnchart";
-        let mut data_store = Datastore::try_new(db_name).await.unwrap();
-
-        let collection_name = "users";
-        let record_id = "6423b7d647a9690332556b41";
-
-        let res = data_store
-            .try_delete(collection_name, record_id)
+        let _ = data_store
+            .try_create_one(table, "books", book_record.clone(), None)
             .await
             .unwrap();
 
-        println!("{:?}", res);
+        let _ = data_store
+            .try_delete(table, &book_record._id)
+            .await
+            .unwrap();
+
+        let read_res = data_store
+            .try_read::<BookRecord>(table, &book_record._id)
+            .await
+            .unwrap();
+
+        println!("{:#?}", read_res);
+        //Assert None, None
     }
 
     #[tokio::test]
-    async fn test_12_read_documents_by_ids() {
+    async fn test_10_clear_data_store() {
         let db_name = "fnchart";
         let data_store = Datastore::try_new(db_name).await.unwrap();
 
-        let table = "users";
-
-        let ids = vec!["1".to_string(), "2".to_string(), "3".to_string()];
-
-        let update_result = data_store.try_read_many(table, ids).await.unwrap();
-        println!("{:#?}", update_result);
+        let _ = data_store.clear_datastore("books").await.unwrap();
     }
 }

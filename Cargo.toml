@@ -10,7 +10,6 @@ mongodb = "2.3.1"
 bson = { version = "2.5.0", features = ["chrono-0_4"] } # Needed for using chrono datetime in doc
 serde = { version = "1.0", features = ["derive"] }
 odds_api = { path = "../tasks/task_odds_data" }
-# books = {path = "../apps/app_book"}
 dotenv = "0.15.0"
 anyhow = "1.0.69"
 futures = "0.3.26"
@@ -19,4 +18,8 @@ tokio = { version = "1.0", features = ["full"] }
 reqwest = {version = "0.11.14", features = ["json"]}
 serde_json = "1.0.93"
 futures-util = "0.3.27"
-
+redis = { version = "0.23.0", features = ["tokio-comp", "json"] }
+json = "0.12.4"
+mobc = "0.8"
+thiserror = "1.0.40"
+mobc-redis = "0.8"

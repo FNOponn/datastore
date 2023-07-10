@@ -8,10 +8,11 @@ mod atlas_tests {
     use crate::book_types::{Book, BookRecord, Bookstore, BookstoreRecord};
 
     use bson::{doc, to_document, Document};
+    use futures_util::StreamExt;
     use odds_api::test_data::TestData;
 
     #[tokio::test]
-    async fn test_02_try_insert_one() {
+    async fn test_01_try_insert_one() {
         let db_name = "fnchart";
         let atlas = Atlas::try_new(db_name).await.unwrap();
         let table = "books";
@@ -252,7 +253,10 @@ mod atlas_tests {
             },
         };
 
-        // atlas.try_insert_one("bookstore", test_record);
+        atlas
+            .try_insert_one("bookstore", &test_bookstore)
+            .await
+            .unwrap();
 
         let assertion_value = doc! {
             "_id": "2b7245f77b1866f1fd422944eca23609",
@@ -276,7 +280,7 @@ mod atlas_tests {
         let db_name = "fnchart";
         let atlas = Atlas::try_new(db_name).await.unwrap();
 
-        let test_record_1 = BookRecord {
+        let book_record_1 = BookRecord {
             _id: "03d15979ffd0df61cd6dd3d5a2fc4d04".to_owned(),
             data: Book {
                 name: "The Grapes of Wrath".to_owned(),
@@ -285,7 +289,7 @@ mod atlas_tests {
             },
         };
 
-        let test_record_2 = BookRecord {
+        let book_record_2 = BookRecord {
             _id: "56420b74c402bfccb04db2542d901054".to_owned(),
             data: Book {
                 name: "Down and Out In Paris and London".to_owned(),
@@ -294,17 +298,45 @@ mod atlas_tests {
             },
         };
 
-        // let test: Vec<_> = vec![test_record];
+        let bookstore_record_1 = BookstoreRecord {
+            _id: "2b7245f77b1866f1fd422944eca23609".to_owned(),
+            data: Bookstore {
+                name: "Book Warehouse".to_owned(),
+                address: "632 W Broadway, Vancouver, BC V5Z 1G1".to_owned(),
+                number: "(604) 872-5711".to_owned(),
+            },
+        };
 
-        // let res = atlas
-        //     .try_find_bookstore::<BookRecord>(test_record)
-        //     .await
-        //     .unwrap();
+        let bookstore_record_2 = BookstoreRecord {
+            _id: "35fa3010596b8866ec0673550d287fad".to_owned(),
+            data: Bookstore {
+                name: "The Paper Hound".to_owned(),
+                address: "344 W Pender St, Vancouver, BC V6B 1T1".to_owned(),
+                number: "(604) 428-1344".to_owned(),
+            },
+        };
 
-        // assert_eq!()
-        // let res = atlas
-        //     .find_bookstores::<BookRecord, Book>("bookstore", test)
-        //     .await
-        //     .unwrap();
+        let book_records = vec![book_record_1, book_record_2];
+        let bookstore_records = vec![bookstore_record_1, bookstore_record_2];
+        let book_ids = vec![
+            "03d15979ffd0df61cd6dd3d5a2fc4d04",
+            "56420b74c402bfccb04db2542d901054",
+        ];
+
+        let _ = atlas.try_insert_many("books", book_records).await.unwrap();
+        let _ = atlas
+            .try_insert_many("bookstores", bookstore_records)
+            .await
+            .unwrap();
+
+        let res = atlas
+            .find_bookstores::<BookstoreRecord>(book_ids)
+            .await
+            .unwrap();
+        // println!("{:#?}", res);
+        assert_eq!(res.len(), 2);
+
+        atlas.try_delete_all("books").await.unwrap();
+        atlas.try_delete_all("bookstores").await.unwrap();
     }
 }
