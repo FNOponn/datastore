@@ -6,43 +6,45 @@ Build a template for an app that can be loaded into an AWS EC2 instance via code
 
 The app should do the following:
 
-1. Pull data from an outside api and load it into a struct
-2. Upload data from struct to an outside datastore (Atlas-mongodb initially)
+1. [ ] Pull data from an outside api and load it into a struct
+2. [ ] Upload data from struct to an outside datastore (Atlas-mongodb initially)
 
-3. Finally, serve the data from a Datastore struct via a GraphQL API
+3. [ ] Finally, serve the data from a Datastore struct via a GraphQL API
 
-   - Create a Redis Cache layer in front of every call to MongoDb, where we check the cache first: "books_INSERT ID HERE"
+   [ ] Create a Redis Cache layer in front of every call to MongoDb, where we check the cache first: "books_INSERT ID HERE"
 
    READ
 
-   - Check if cache record exists, and if so, pull from cache and return (skip Mongodb)
+   [ ] Check if cache record exists, and if so, pull from cache and return (skip Mongodb)
 
    WRITE
 
-   - Update record in MongoDB
-   - If the update is successful, check if cache record exists and if so, update it
+   [ ] Update record in MongoDB
+   
+   [ ] If the update is successful, check if cache record exists and if so, update it
 
-   - Optional Optimization: Don't update mongo directly, but send the update request into an external queue, and return response to user right after updating cache
+   [ ] Optional Optimization: Don't update mongo directly, but send the update request into an external queue, and return response to user right after updating cache
 
-4. Convert schema
-   Implement multiple table cache + normalization
+5. [ ] Convert schema
 
-   4.1 Implement a one to many relationship within the Datastore. We want a collection of bookstore
+   [ ] Implement multiple table cache + normalization
+
+   [ ] Implement a one to many relationship within the Datastore. We want a collection of bookstore
    that have multiple books. Add a column to book FK that references the PK of the book store within
    another collection. TEST: Given an array of books, find the bookstores that correlate to each book.
 
    Bookstore name should be unique. Make it complicated.
 
-   4.2 Implement a cache that reflects this new structure (one to many implementation). Cache should utilize collections with
+   [ ] Implement a cache that reflects this new structure (one to many implementation). Cache should utilize collections with
    index to keep track of which items were modified and need to be updated in the separate collection(table).
 
-5. The above app should come with a basic AWS infrastructure for an EC2 instance
+6. [ ] The above app should come with a basic AWS infrastructure for an EC2 instance
    in an ECS connected to a load-balancer. The app should auto-deploy from github
    via codepipeline on every merge to main branch.
 
-6. Include a perf analysis (load-testing) for the app.
+7. [ ] Include a perf analysis (load-testing) for the app.
 
-7. Endpoint for client consumption via GraphQL.
+8. [ ] Endpoint for client consumption via GraphQL.
 
 //Cache normalization
 
